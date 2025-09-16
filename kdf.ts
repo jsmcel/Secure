@@ -58,7 +58,7 @@ export const DEFAULT_SCRYPT: Required<KdfConfig> = {
 // Lightweight scrypt fallback for mobile (faster but still secure)
 export const MOBILE_SCRYPT: Required<KdfConfig> = {
   id: 'scrypt',
-  N: 1 << 14,      // 16384 (minimum acceptable)
+  N: 1 << 12,      // 4096 (mobile optimized - your original value)
   r: 8,
   s_p: 1,
   m: 0, t: 0, p: 0,
@@ -128,10 +128,10 @@ export async function deriveKey(
       }
     }
     
-    // Scrypt fallback
+    // Scrypt fallback with platform optimization
     const scryptConfig = cfg?.id === 'scrypt' ? 
       { ...DEFAULT_SCRYPT, ...cfg } : 
-      (isWeb ? DEFAULT_SCRYPT : MOBILE_SCRYPT); // Mobile gets lighter scrypt
+      MOBILE_SCRYPT; // Always use mobile-optimized scrypt for fallback
     
     const key = await deriveKeyScrypt(password, salt, scryptConfig as Required<KdfConfig>);
     return { key, config: scryptConfig as Required<KdfConfig> };
