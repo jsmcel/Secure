@@ -8,6 +8,7 @@ import * as Linking from 'expo-linking';
 import nacl from 'tweetnacl';
 import { scrypt } from 'scrypt-js';
 import CryptoVault from './CryptoVault';
+import { encryptV2, decryptAuto, getKdfInfo } from './crypto-v2';
 
 if (typeof global.Buffer === 'undefined') {
   global.Buffer = Buffer;
@@ -103,12 +104,31 @@ export default function App() {
     
     setIsLoading(true);
     try {
-      const b64 = await encryptToBase64(message, password);
+      console.log('🔐 Using v2 encryption with Argon2id/scrypt...');
+      const startTime = Date.now();
+      const b64 = await encryptV2(message, password);
+      const endTime = Date.now();
+      console.log(`⚡ Encryption took ${endTime - startTime}ms`);
       setCipher(b64);
       await Clipboard.setStringAsync(b64);
       
+      // Show KDF info for transparency
+      const kdfInfo = getKdfInfo(b64);
+      const kdfText = kdfInfo ? kdfInfo.kdfId.toUpperCase() : 'UNKNOWN';
+      const kdfDetails = kdfInfo ? 
+        (kdfInfo.kdfId === 'argon2id' ? 
+          `Argon2id (${kdfInfo.config.m}KiB, t=${kdfInfo.config.t}, p=${kdfInfo.config.p})` :
+          `scrypt (N=${kdfInfo.config.N}, r=${kdfInfo.config.r}, p=${kdfInfo.config.s_p})`
+        ) : 'Legacy format';
+      
       setIsLoading(false);
-      Alert.alert('✅ Success', 'Message encrypted and copied to clipboard');
+      Alert.alert(
+        '✅ Encryption Success', 
+        `Message encrypted and copied to clipboard\n\n` +
+        `🔐 KDF Used: ${kdfText}\n` +
+        `⚙️ Parameters: ${kdfDetails}\n` +
+        `⏱️ Time: ${endTime - startTime}ms`
+      );
       
       Share.share({ 
         message: b64,
@@ -129,8 +149,31 @@ export default function App() {
     
     setIsLoading(true);
     try {
-      const pt = await decryptFromBase64(cipher.trim(), decryptPassword);
+      console.log('🔓 Using auto-decrypt (v2 + legacy fallback)...');
+      
+      // Try to get KDF info first
+      const kdfInfo = getKdfInfo(cipher.trim());
+      if (kdfInfo) {
+        console.log(`📋 Detected format: v2 with ${kdfInfo.kdfId.toUpperCase()}`);
+        const params = kdfInfo.kdfId === 'argon2id' ? 
+          `m=${kdfInfo.config.m}KiB, t=${kdfInfo.config.t}, p=${kdfInfo.config.p}` :
+          `N=${kdfInfo.config.N}, r=${kdfInfo.config.r}, p=${kdfInfo.config.s_p}`;
+        console.log(`⚙️ KDF params: ${params}`);
+      } else {
+        console.log('📋 Detected format: LEGACY (old scrypt)');
+      }
+      
+      const decryptStart = Date.now();
+      const pt = await decryptAuto(cipher.trim(), decryptPassword);
+      const decryptEnd = Date.now();
       setPlainOut(pt);
+      
+      // Show detailed format info
+      const formatText = kdfInfo ? 
+        `v2 format using ${kdfInfo.kdfId.toUpperCase()}` : 
+        'legacy format (old scrypt)';
+      console.log(`✅ Decrypted using ${formatText} in ${decryptEnd - decryptStart}ms`);
+      
     } catch (error: any) {
       setPlainOut('ERROR: ' + (error?.message || 'Incorrect password or corrupted text'));
     } finally {
@@ -234,7 +277,10 @@ export default function App() {
               {showCryptoVault ? '🔐🔐🔐 CryptoVault' : '💬 Secure Messages'}
             </Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-              {showCryptoVault ? 'Triple-Layer Seed Protection' : 'End-to-end encryption'}
+              {showCryptoVault ? 'Triple-Layer Seed Protection' : 'End-to-end encryption v2'}
+            </Text>
+            <Text style={[styles.kdfBadge, { color: theme.primary }]}>
+              🛡️ Argon2id + scrypt (OWASP)
             </Text>
           </View>
           <Pressable 
@@ -284,7 +330,7 @@ export default function App() {
               <Text style={[styles.sectionTitle, { color: theme.text }]}>
                 📝 Your Message
               </Text>
-              <TextInput
+      <TextInput
                 style={[
                   styles.modernInput, 
                   styles.multilineInput,
@@ -294,18 +340,18 @@ export default function App() {
                     borderColor: theme.border
                   }
                 ]}
-                value={message}
-                multiline
-                onChangeText={setMessage}
+        value={message}
+        multiline
+        onChangeText={setMessage}
                 placeholder="Type your secret message here..."
                 placeholderTextColor={theme.textSecondary}
-                editable={!isLoading}
-              />
-              
+        editable={!isLoading}
+      />
+
               <Text style={[styles.sectionTitle, { color: theme.text }]}>
                 🔑 Password
               </Text>
-              <TextInput
+      <TextInput
                 style={[
                   styles.modernInput,
                   { 
@@ -314,28 +360,28 @@ export default function App() {
                     borderColor: theme.border
                   }
                 ]}
-                value={password}
-                onChangeText={setPassword}
+        value={password}
+        onChangeText={setPassword}
                 placeholder="Enter a strong password"
                 placeholderTextColor={theme.textSecondary}
-                secureTextEntry
-                editable={!isLoading}
-              />
+        secureTextEntry
+        editable={!isLoading}
+      />
 
-              <Pressable 
+      <Pressable 
                 style={[
                   styles.modernButton, 
                   styles.primaryButton,
                   { backgroundColor: theme.primary },
                   isLoading && styles.buttonDisabled
                 ]} 
-                onPress={onEncryptShare}
-                disabled={isLoading}
-              >
+        onPress={onEncryptShare}
+        disabled={isLoading}
+      >
                 <Text style={styles.primaryButtonText}>
                   {isLoading ? '🔐 Encrypting...' : '🚀 Encrypt & Share'}
-                </Text>
-              </Pressable>
+        </Text>
+      </Pressable>
 
               {cipher && (
                 <View style={styles.shareSection}>
@@ -343,21 +389,21 @@ export default function App() {
                     📤 Quick Share
                   </Text>
                   <View style={styles.shareButtons}>
-                    <Pressable 
+        <Pressable 
                       style={[styles.shareButton, { backgroundColor: '#25D366' }]}
-                      onPress={openWhatsApp}
+          onPress={openWhatsApp}
                       disabled={isLoading}
-                    >
+        >
                       <Text style={styles.shareButtonText}>WhatsApp</Text>
-                    </Pressable>
-                    <Pressable 
+        </Pressable>
+        <Pressable 
                       style={[styles.shareButton, { backgroundColor: '#0088cc' }]}
-                      onPress={openTelegram}
+          onPress={openTelegram}
                       disabled={isLoading}
-                    >
+        >
                       <Text style={styles.shareButtonText}>Telegram</Text>
-                    </Pressable>
-                  </View>
+        </Pressable>
+      </View>
                 </View>
               )}
             </View>
@@ -368,7 +414,7 @@ export default function App() {
               <Text style={[styles.sectionTitle, { color: theme.text }]}>
                 📥 Encrypted Message
               </Text>
-              <TextInput
+      <TextInput
                 style={[
                   styles.modernInput,
                   styles.multilineInput,
@@ -378,9 +424,9 @@ export default function App() {
                     borderColor: theme.border
                   }
                 ]}
-                value={cipher}
-                multiline
-                onChangeText={setCipher}
+        value={cipher}
+        multiline
+        onChangeText={setCipher}
                 placeholder="Paste encrypted message here..."
                 placeholderTextColor={theme.textSecondary}
                 editable={!isLoading}
@@ -403,8 +449,8 @@ export default function App() {
                 placeholder="Enter password to decrypt"
                 placeholderTextColor={theme.textSecondary}
                 secureTextEntry
-                editable={!isLoading}
-              />
+        editable={!isLoading}
+      />
 
               <View style={styles.actionButtons}>
                 <Pressable 
@@ -598,6 +644,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     opacity: 0.8,
   },
+  kdfBadge: {
+    fontSize: 10,
+    marginTop: 4,
+    opacity: 0.9,
+    fontWeight: '600',
+  },
   themeToggle: {
     width: 44,
     height: 44,
@@ -717,11 +769,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   shareButton: {
-    flex: 1,
+    flex: 1, 
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: 'center', 
   },
   shareButtonText: {
     color: '#ffffff',

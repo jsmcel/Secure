@@ -6,6 +6,7 @@ import { Buffer } from 'buffer';
 import 'react-native-get-random-values';
 import nacl from 'tweetnacl';
 import { scrypt } from 'scrypt-js';
+import { encryptV2, decryptAuto, getKdfInfo } from './crypto-v2';
 
 if (typeof global.Buffer === 'undefined') {
   global.Buffer = Buffer;
@@ -55,12 +56,14 @@ async function decryptFromBase64(b64: string, password: string): Promise<string>
   return new TextDecoder().decode(plain);
 }
 
-async function tripleEncrypt(seedPhrase: string, pass1: string, pass2: string, pass3: string): Promise<string> {
-  console.log('🔐🔐🔐 Starting triple encryption...');
-  const layer1 = await encryptToBase64(seedPhrase, pass1);
-  const layer2 = await encryptToBase64(layer1, pass2);
-  const layer3 = await encryptToBase64(layer2, pass3);
-  console.log('✅ Triple encryption complete');
+async function tripleEncryptV2(seedPhrase: string, pass1: string, pass2: string, pass3: string): Promise<string> {
+  console.log('🔐🔐🔐 Starting v2 triple encryption with Argon2id...');
+  const layer1 = await encryptV2(seedPhrase, pass1);
+  console.log('✅ Layer 1 complete (v2)');
+  const layer2 = await encryptV2(layer1, pass2);
+  console.log('✅ Layer 2 complete (v2)');
+  const layer3 = await encryptV2(layer2, pass3);
+  console.log('✅ Layer 3 complete (v2) - Triple encryption done');
   return layer3;
 }
 
@@ -117,13 +120,18 @@ export default function CryptoVault({ onBack }: CryptoVaultProps) {
 
     setIsLoading(true);
     try {
-      const result = await tripleEncrypt(seedPhrase, password1, password2, password3);
+      const result = await tripleEncryptV2(seedPhrase, password1, password2, password3);
       setEncryptedOutput(result);
       await Clipboard.setStringAsync(result);
       
+      // Show KDF info
+      const kdfInfo = getKdfInfo(result);
+      const kdfText = kdfInfo ? `${kdfInfo.kdfId.toUpperCase()}` : 'UNKNOWN';
+      
       Alert.alert(
-        '🔐🔐🔐 Triple Encryption Success', 
-        'Your seed phrase is protected with 3 layers.\n\n' +
+        '🔐🔐🔐 v2 Triple Encryption Success', 
+        'Your seed phrase is protected with 3 layers using enterprise-grade security.\n\n' +
+        `🔐 KDF: ${kdfText} (OWASP compliant)\n` +
         '🌐 OUTER LAYER: You can store this text ANYWHERE PUBLIC\n' +
         '📋 Already copied to clipboard'
       );
@@ -144,7 +152,7 @@ export default function CryptoVault({ onBack }: CryptoVaultProps) {
           Alert.alert('Error', 'Need encrypted text and password 3');
           return;
         }
-        const result = await decryptFromBase64(encryptedOutput.trim(), password3);
+        const result = await decryptAuto(encryptedOutput.trim(), password3);
         setTempData1(result);
         setDecryptStep(2);
         setPassword3('');
@@ -155,7 +163,7 @@ export default function CryptoVault({ onBack }: CryptoVaultProps) {
           Alert.alert('Error', 'Need password 2');
           return;
         }
-        const result = await decryptFromBase64(tempData1, password2);
+        const result = await decryptAuto(tempData1, password2);
         setTempData2(result);
         setDecryptStep(3);
         setPassword2('');
@@ -167,7 +175,7 @@ export default function CryptoVault({ onBack }: CryptoVaultProps) {
           Alert.alert('Error', 'Need password 1 (most secret)');
           return;
         }
-        const result = await decryptFromBase64(tempData2, password1);
+        const result = await decryptAuto(tempData2, password1);
         setDecryptedSeed(result);
         setPassword1('');
         setTempData2('');
@@ -232,7 +240,10 @@ export default function CryptoVault({ onBack }: CryptoVaultProps) {
             )}
             <View>
               <Text style={[styles.title, { color: theme.text }]}>🔐🔐🔐 CryptoVault</Text>
-              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Triple-Layer Seed Protection</Text>
+              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Triple-Layer Seed Protection v2</Text>
+              <Text style={[styles.kdfBadge, { color: theme.primary }]}>
+                🛡️ Argon2id + scrypt (OWASP)
+              </Text>
             </View>
           </View>
           <Pressable 
@@ -511,6 +522,12 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '800' },
   subtitle: { fontSize: 12, marginTop: 2, opacity: 0.8 },
+  kdfBadge: {
+    fontSize: 10,
+    marginTop: 4,
+    opacity: 0.9,
+    fontWeight: '600',
+  },
   themeToggle: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   themeToggleText: { fontSize: 16 },
   tabContainer: { flexDirection: 'row', margin: 16, padding: 4, borderRadius: 16 },
